@@ -130,14 +130,21 @@ No dependencies beyond the Python 3.8+ standard library.
 ## Results
 
 Measured on four benchmark suites — two we authored, two published external
-benchmarks graded by their own harnesses ([full results](docs/results.md)):
+benchmarks graded by their own harnesses ([full results](docs/results.md)).
+Each cell is the suite's pass metric, with cost where the harness tracked it:
 
-| Suite | Headline |
-|---|---|
-| **SWE-bench Lite** (official Docker grader) | ODD **12/15** resolved vs Superpowers 9/15, with **~5× smaller diffs** (12.6 vs 63.8 lines avg) |
-| **ProgramBench** (hidden behavioral tests) | ODD **56.2%** (+25.8 pts over baseline) — top quality arm, reversing the "skills hurt" result |
-| **Custom A/B** (outcome + merge-readiness) | ODD **62.5%** outcome / **81.2%** merge-ready vs 25% / 53.7% |
-| **SkillsBench** (21 paired tasks) | **net-zero** — surfaced the self-oracle failure mode that drove the `--kind e2e` gate |
+| Benchmark (pass metric) | Baseline | Superpowers | ODD | How ODD did |
+|---|---|---|---|---|
+| **SWE-bench Lite** (resolved /15) | 10/15 ¹ | 9/15 | **12/15** | ✅ most resolved, **~5× smaller diffs** (13 vs 64 lines avg) |
+| **ProgramBench** (hidden-test score · cost) | 30.4% · $5.94 | 40.7% · $8.99 ² | **56.2% · $8.25** | ✅ top quality, **+25.8 pts**; reverses "skills hurt" |
+| **Custom A/B** (outcome pass /8) | — | 25% (2/8) | **62.5% (5/8)** | ✅ **+37.5 pts**, 81% merge-ready vs 54% |
+| **SkillsBench** (21 paired tasks) | tie | — | tie | ➖ **net-zero**; surfaced the self-oracle failure mode that drove the `--kind e2e` gate |
+
+¹ SWE-bench has no "baseline" condition we ran; the figure is the published
+SWE-agent+Sonnet submission on the same pinned instances — a neutral external
+yardstick. ² ProgramBench's "Superpowers" arm is its TDD skill (skill-only, as
+the [original experiment](https://x.com/kunchenguid/status/2064196344244531404)
+injected it). Cost was tracked only on ProgramBench; `—` = condition not run.
 
 **Honest takeaway:** ODD's first-order value is outcome quality and diff
 discipline (clear on SWE-bench Lite and ProgramBench), not a universal win on
