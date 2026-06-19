@@ -146,11 +146,6 @@ yardstick. ² ProgramBench's "Superpowers" arm is its TDD skill (skill-only, as
 the [original experiment](https://x.com/kunchenguid/status/2064196344244531404)
 injected it). Cost was tracked only on ProgramBench; `—` = condition not run.
 
-**Honest takeaway:** ODD's first-order value is outcome quality and diff
-discipline (clear on SWE-bench Lite and ProgramBench), not a universal win on
-every harness (net-zero on SkillsBench) — and it costs extra wall-clock.
-Single-run agent A/B is noisy; treat any delta below N≥3/cell as directional.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
