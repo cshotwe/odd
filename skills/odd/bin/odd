@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""odd — outcome-driven development for coding agents.
+
+Declares user-observable acceptance checks up front, executes them against
+the real artifact, and records verbatim evidence keyed to the working-tree
+state. A Stop hook (hooks/outcome_gate.py) reads the evidence to decide
+whether the agent may declare the task done.
+
+Commands:
+  odd init "<outcome sentence>"        start an outcome contract
+  odd check "<desc>" --cmd "<shell>"   add an executable acceptance check
+                                       [--expect "<substring>"] [--expect-fail]
+  odd prove [N ...]                    run all (or selected) checks, record evidence
+  odd status                           show contract + evidence state
+  odd review [--base REF]              maintainer-lens audit of the current diff
+  odd done                             summary; exits non-zero if outcome unproven
+  odd archive [--slug NAME]            promote the proven contract to outcomes/
+  odd ci [SPEC ...] [--junit FILE]     run archived outcome specs (CI regression)
+  odd reset                            remove .odd state
+
+No dependencies beyond the Python 3.8+ standard library.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+ODD_DIR = ".odd"
+CONTRACT = os.path.join(ODD_DIR, "outcome.json")
+EVIDENCE = os.path.join(ODD_DIR, "evidence.json")
+OUTCOMES_DIR = "outcomes"  # durable, repo-committed specs run by `odd ci`
+MAX_OUTPUT = 4000  # chars of captured output stored per check
+
+
+def _root():
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def _path(p):
+    return os.path.join(_root(), p)
+
+
+def _load(path, default):
+    try:
+        with open(_path(path)) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _save(path, data):
+    # Atomic write so a concurrent reader never sees a truncated file.
+    # Temp file + os.replace.
+    full = _path(path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    tmp = full + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, full)
+
+
+def tree_fingerprint():
+    """Hash of the working tree's current diff + untracked files, so evidence
+    goes stale the moment code changes after it was recorded."""
+    parts = []
+    for cmd in (["git", "diff", "HEAD"], ["git", "status", "--porcelain"]):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=_root())
+            parts.append(r.stdout)
+        except Exception:
+            parts.append("")
+    # include content of untracked files so edits to them invalidate evidence
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=_root(),
+        )
+        for fn in r.stdout.splitlines():
+            if fn.startswith(ODD_DIR):
+                continue
+            try:
+                with open(_path(fn), "rb") as f:
+                    parts.append(hashlib.sha256(f.read()).hexdigest())
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
+def cmd_init(args):
+    contract = {
+        "outcome": args.outcome,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "checks": [],
+    }
+    if args.type:
+        contract["type"] = args.type
+    _save(CONTRACT, contract)
+    if os.path.exists(_path(EVIDENCE)):
+        os.remove(_path(EVIDENCE))
+    print(f"outcome contract started: {args.outcome}")
+    if args.type:
+        print(f"  type: {args.type}")
+    print('add checks with: odd check "<what the user would observe>" --cmd "<command>"')
+
+
+# A check's `kind` records HOW the outcome is being verified — the single most
+# important property for trusting "proven". The failure we keep hitting: an
+# agent writes checks that exercise its OWN code/harness/threshold, proves them
+# green, and ships something the real grader fails. So every check is typed:
+#
+#   e2e         runs the REAL artifact end-to-end, the way the user/grader does,
+#               and observes the outcome (NOT an internal function, NOT a sim the
+#               agent built). This is the only kind that can satisfy the hard gate.
+#   reference   diffs the built artifact against a provided oracle (a binary,
+#               golden file, or endpoint the agent did NOT write).
+#   spec        asserts a value quoted verbatim from the task/docs (--source).
+#   differential  agreement with an independent second derivation of the answer.
+#   unit        tests an internal function in isolation (weak: agrees with your code).
+#   self        a self-defined threshold or self-built harness (weakest; default).
+#
+# reference/spec/differential are "independent oracles" (criterion comes from
+# outside the agent's own authorship); unit/self are not. e2e is orthogonal:
+# it's about exercising the real thing end-to-end, and is what the hard gate needs.
+_INDEPENDENT_KINDS = {"e2e", "reference", "spec", "differential"}
+
+
+def cmd_check(args):
+    contract = _load(CONTRACT, None)
+    if contract is None:
+        sys.exit('no contract; run: odd init "<outcome>"')
+    if args.kind == "spec" and not args.source:
+        sys.exit('--kind spec requires --source "<where the expected value is stated>" '
+                 '(e.g. "task.md:L12" or a quoted requirement)')
+    contract["checks"].append({
+        "desc": args.desc,
+        "cmd": args.cmd,
+        "expect": args.expect,
+        "expect_fail": args.expect_fail,
+        "kind": args.kind,
+        "source": args.source,
+    })
+    _save(CONTRACT, contract)
+    note = "" if args.kind in _INDEPENDENT_KINDS else \
+        "  ⚠ self/unit check — confirms your own understanding, can't satisfy the e2e gate"
+    print(f"check #{len(contract['checks'])} [{args.kind}]: {args.desc}{note}")
+
+
+def _run_check(chk):
+    # Run checks under bash, not the default /bin/sh. On Debian/Ubuntu sh is
+    # dash, which rejects bashisms like process substitution `<(...)` — the
+    # natural way to write a check that diffs a built artifact against a
+    # reference. Without this, such checks fail on a shell syntax error rather
+    # than on their actual outcome. Fall back to sh if bash is unavailable.
+    bash = shutil.which("bash")
+    try:
+        r = subprocess.run(
+            chk["cmd"], shell=True, capture_output=True, text=True,
+            timeout=120, cwd=_root(),
+            **({"executable": bash} if bash else {}),
+        )
+        out = (r.stdout + r.stderr)[:MAX_OUTPUT]
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        return False, -1, "(timed out after 120s)"
+    ok = (code != 0) if chk.get("expect_fail") else (code == 0)
+    if ok and chk.get("expect"):
+        ok = chk["expect"] in out
+    return ok, code, out
+
+
+def cmd_prove(args):
+    contract = _load(CONTRACT, None)
+    if contract is None:
+        sys.exit('no contract; run: odd init "<outcome>"')
+    if not contract["checks"]:
+        sys.exit("contract has no checks; add at least one with: odd check")
+    selected = set(args.nums) if args.nums else None
+    prior = _load(EVIDENCE, {"results": []})
+    results = {r["num"]: r for r in prior.get("results", [])}
+    any_fail = False
+    for i, chk in enumerate(contract["checks"], 1):
+        if selected and i not in selected:
+            continue
+        ok, code, out = _run_check(chk)
+        results[i] = {
+            "num": i, "desc": chk["desc"], "cmd": chk["cmd"],
+            "passed": ok, "exit_code": code, "output": out,
+            "ran_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        mark = "PASS" if ok else "FAIL"
+        print(f"[{mark}] #{i} {chk['desc']}")
+        if not ok:
+            any_fail = True
+            print(f"      $ {chk['cmd']}  (exit {code})")
+            tail = out.strip().splitlines()[-15:]
+            for line in tail:
+                print(f"      {line}")
+    evidence = {
+        "fingerprint": tree_fingerprint(),
+        "recorded": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "results": [results[k] for k in sorted(results)],
+    }
+    _save(EVIDENCE, evidence)
+    total = len(contract["checks"])
+    passed = sum(1 for r in evidence["results"] if r["passed"])
+    print(f"\n{passed}/{total} checks passing; evidence recorded for tree {evidence['fingerprint']}")
+    # Verification profile: not all green checks are equal. Show how the outcome
+    # was actually verified so "passing" can't be mistaken for "proven".
+    res_by_num = {r["num"]: r for r in evidence["results"]}
+    prof = {}
+    for i, c in enumerate(contract["checks"], 1):
+        k = c.get("kind", "self")
+        r = res_by_num.get(i)
+        if r is not None:
+            prof.setdefault(k, [0, 0])
+            prof[k][0] += 1
+            prof[k][1] += 1 if r["passed"] else 0
+    if prof:
+        parts = [f"{k}:{v[1]}/{v[0]}" for k, v in sorted(prof.items())]
+        print(f"verification profile (passing/total by kind): {', '.join(parts)}")
+        passing_e2e = sum(1 for i, c in enumerate(contract["checks"], 1)
+                          if c.get("kind") == "e2e" and res_by_num.get(i, {}).get("passed"))
+        if not passing_e2e:
+            print("  ⚠ NO passing end-to-end check. Green here does NOT mean the outcome "
+                  "works — it means your own checks agree with your own code. Add an "
+                  "`odd check --kind e2e` that runs the real artifact and observes the outcome.")
+    sys.exit(1 if any_fail else 0)
+
+
+def _evidence_state():
+    """Returns (state, detail). state in: missing|stale|failing|incomplete|proven"""
+    contract = _load(CONTRACT, None)
+    if contract is None:
+        return "missing", "no outcome contract (.odd/outcome.json)"
+    if not contract["checks"]:
+        return "missing", "contract has no acceptance checks"
+    evidence = _load(EVIDENCE, None)
+    if evidence is None:
+        return "missing", "no evidence recorded; run: odd prove"
+    if evidence.get("fingerprint") != tree_fingerprint():
+        return "stale", "code changed since evidence was recorded; re-run: odd prove"
+    results = {r["num"]: r for r in evidence.get("results", [])}
+    missing = [i for i in range(1, len(contract["checks"]) + 1) if i not in results]
+    if missing:
+        return "incomplete", f"checks never run: {missing}; run: odd prove"
+    failing = [r["num"] for r in results.values() if not r["passed"]]
+    if failing:
+        return "failing", f"checks failing: {failing}"
+    # All checks pass — but "passing" is only meaningful if at least one check
+    # actually exercised the real artifact end-to-end. A contract whose checks
+    # are all self-authored unit/threshold checks proves only that the agent's
+    # code agrees with the agent's understanding — the exact failure mode where
+    # ODD declared "all checks pass" and the real grader scored zero. Gate on it.
+    checks = contract["checks"]
+    passing_e2e = [i for i, c in enumerate(checks, 1)
+                   if c.get("kind") == "e2e" and results.get(i, {}).get("passed")]
+    if not passing_e2e:
+        kinds = sorted({c.get("kind", "self") for c in checks})
+        return "unverified", (
+            f"all {len(results)} checks pass but NONE is a passing end-to-end check "
+            f"(kinds present: {', '.join(kinds)}). Add an `odd check --kind e2e` that "
+            f"runs the real artifact the way the user/grader does and observes the "
+            f"outcome — not an internal function or a harness you built.")
+    return "proven", (f"all {len(results)} checks passing against current tree "
+                      f"({len(passing_e2e)} end-to-end)")
+
+
+def cmd_status(_args):
+    contract = _load(CONTRACT, None)
+    if contract is None:
+        print("no outcome contract")
+        return
+    print(f"OUTCOME: {contract['outcome']}\n")
+    evidence = _load(EVIDENCE, {"results": []})
+    results = {r["num"]: r for r in evidence.get("results", [])}
+    fresh = evidence.get("fingerprint") == tree_fingerprint()
+    for i, chk in enumerate(contract["checks"], 1):
+        r = results.get(i)
+        if r is None:
+            mark = "  ?  "
+        elif not fresh:
+            mark = "STALE"
+        else:
+            mark = "PASS " if r["passed"] else "FAIL "
+        print(f"[{mark}] #{i} {chk['desc']}")
+        print(f"         $ {chk['cmd']}")
+    state, detail = _evidence_state()
+    print(f"\nstate: {state} — {detail}")
+
+
+def cmd_done(_args):
+    state, detail = _evidence_state()
+    print(f"{state}: {detail}")
+    sys.exit(0 if state == "proven" else 1)
+
+
+def cmd_reset(_args):
+    for p in (CONTRACT, EVIDENCE):
+        if os.path.exists(_path(p)):
+            os.remove(_path(p))
+    print("odd state cleared")
+
+
+# ------------------------------------------------------------ archive/ci ---
+# An archived outcome spec is the durable form of a proven contract: the
+# outcome sentence + its black-box checks, committed to the repo and re-run by
+# `odd ci` exactly like a test suite — except the "tests" exercise the real
+# artifact the way the user does, in any language, with no framework. The
+# fingerprint mechanism does not apply: CI runs on clean checkouts, so specs
+# always re-execute.
+
+
+def _slugify(text, limit=48):
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:limit].rstrip("-") or "outcome"
+
+
+def cmd_archive(args):
+    state, detail = _evidence_state()
+    if state != "proven":
+        sys.exit(f"refusing to archive an unproven outcome ({state}: {detail})")
+    contract = _load(CONTRACT, None)
+    slug = args.slug or _slugify(contract["outcome"])
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                capture_output=True, text=True, cwd=_root()).stdout.strip()
+    except Exception:
+        commit = None
+    spec = {
+        "outcome": contract["outcome"],
+        "archived": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "proven_at_commit": commit or "unknown",
+        "checks": [{k: v for k, v in chk.items() if v not in (None, False)}
+                   for chk in contract["checks"]],
+    }
+    if contract.get("type"):
+        spec["type"] = contract["type"]
+    dest = os.path.join(OUTCOMES_DIR, f"{slug}.outcome.json")
+    if os.path.exists(_path(dest)) and not args.force:
+        sys.exit(f"{dest} exists; pass --force to overwrite or --slug for a new name")
+    _save(dest, spec)
+    print(f"archived: {dest} ({len(spec['checks'])} check(s))")
+    print("commit it; `odd ci` now guards this outcome on every future change")
+
+
+def _junit_escape(s):
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
+
+
+def cmd_ci(args):
+    import glob as _glob
+    specs = args.specs or sorted(
+        _glob.glob(_path(os.path.join(OUTCOMES_DIR, "*.outcome.json"))))
+    if not specs:
+        sys.exit(f"no outcome specs found in {OUTCOMES_DIR}/ "
+                 "(create them with: odd archive)")
+    suites, any_fail = [], False
+    for spec_path in specs:
+        try:
+            with open(spec_path) as f:
+                spec = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            spec = None
+        if spec is None:
+            print(f"ERROR: cannot parse {spec_path}")
+            any_fail = True
+            continue
+        name = os.path.basename(spec_path).replace(".outcome.json", "")
+        print(f"\n{name}: {spec.get('outcome', '?')}")
+        cases = []
+        for i, chk in enumerate(spec.get("checks", []), 1):
+            t0 = time.time()
+            ok, code, out = _run_check(chk)
+            elapsed = time.time() - t0
+            cases.append({"desc": chk["desc"], "ok": ok, "time": elapsed,
+                          "cmd": chk["cmd"], "out": out})
+            print(f"  [{'PASS' if ok else 'FAIL'}] #{i} {chk['desc']} ({elapsed:.1f}s)")
+            if not ok:
+                any_fail = True
+                print(f"        $ {chk['cmd']}  (exit {code})")
+                for line in out.strip().splitlines()[-10:]:
+                    print(f"        {line}")
+        suites.append({"name": name, "cases": cases})
+    total = sum(len(s["cases"]) for s in suites)
+    failed = sum(1 for s in suites for c in s["cases"] if not c["ok"])
+    print(f"\n{total - failed}/{total} checks passing across {len(suites)} outcome(s)")
+    if args.junit:
+        xml = ['<?xml version="1.0" encoding="UTF-8"?>', "<testsuites>"]
+        for s in suites:
+            n_fail = sum(1 for c in s["cases"] if not c["ok"])
+            xml.append(f'  <testsuite name="{_junit_escape(s["name"])}" '
+                       f'tests="{len(s["cases"])}" failures="{n_fail}">')
+            for c in s["cases"]:
+                xml.append(f'    <testcase name="{_junit_escape(c["desc"])}" '
+                           f'time="{c["time"]:.2f}"'
+                           + (">" if not c["ok"] else "/>"))
+                if not c["ok"]:
+                    xml.append(f'      <failure message="check failed">'
+                               f'{_junit_escape("$ " + c["cmd"] + chr(10) + c["out"])}</failure>')
+                    xml.append("    </testcase>")
+            xml.append("  </testsuite>")
+        xml.append("</testsuites>")
+        with open(args.junit, "w") as f:
+            f.write("\n".join(xml) + "\n")
+        print(f"junit report: {args.junit}")
+    sys.exit(1 if any_fail else 0)
+
+
+# ---------------------------------------------------------------- review ---
+
+DEFENSIVE_RE = re.compile(r"^\+\s*(try:|except\b|if .* is not None\b.*:|\w+\s*=\s*\w+\.get\()")
+COMMENT_RE = re.compile(r"^\+\s*(#|//|/\*|\*)")
+TODO_RE = re.compile(r"^\+.*\b(TODO|FIXME|XXX)\b")
+
+
+def cmd_review(args):
+    """Mechanical maintainer-lens audit of the diff: the signals METR found
+    maintainers actually reject on (style/noise, scope, defensive bloat)."""
+    base = args.base
+    # review audits the git diff; degrade gracefully where git is absent or the
+    # workspace isn't a repo (common in sandboxed task envs) rather than crash.
+    try:
+        diff = subprocess.run(
+            ["git", "diff", base, "--", ".", f":(exclude){ODD_DIR}"],
+            capture_output=True, text=True, cwd=_root(),
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=_root(),
+        ).stdout.splitlines()
+    except FileNotFoundError:
+        print("review: git not available in this workspace; "
+              "skipping diff audit (the prove step still gates the outcome).")
+        return
+    untracked = [u for u in untracked if not u.startswith(ODD_DIR)]
+
+    added = [l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")]
+    removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+    files = re.findall(r"^\+\+\+ b/(.+)$", diff, re.M)
+    comments = [l for l in added if COMMENT_RE.match(l)]
+    defensive = [l for l in added if DEFENSIVE_RE.match(l)]
+    todos = [l for l in added if TODO_RE.match(l)]
+
+    print(f"diff vs {base}: {len(files)} file(s), +{len(added)}/-{len(removed)} lines"
+          + (f", {len(untracked)} new untracked file(s)" if untracked else ""))
+    warnings = []
+    if added and len(comments) / max(len(added), 1) > 0.15:
+        warnings.append(
+            f"comment-heavy diff ({len(comments)}/{len(added)} added lines are comments). "
+            "Maintainers reject narration; match the surrounding code's comment density.")
+    if todos:
+        warnings.append(f"{len(todos)} TODO/FIXME added — finish it or drop it.")
+    if len(defensive) >= 3:
+        warnings.append(
+            f"{len(defensive)} defensive constructs added (try/except, None-guards). "
+            "Unrequested defensive code is a top rejection reason; handle only failure modes the task implies.")
+    if len(files) + len(untracked) > 3:
+        warnings.append(
+            f"{len(files) + len(untracked)} files touched — is each one required by the outcome? "
+            "Drive-by changes get PRs rejected.")
+    for u in untracked:
+        warnings.append(f"new file {u} — new files need a reason a maintainer would accept.")
+    if len(added) > 150:
+        warnings.append(
+            f"+{len(added)} lines is large for a single outcome. Could a smaller change achieve it?")
+
+    if warnings:
+        print("\nmaintainer-lens warnings:")
+        for w in warnings:
+            print(f"  - {w}")
+        print("\nFix what's warranted, then re-run: odd prove && odd review")
+    else:
+        print("no mechanical warnings. Still read the full diff as a maintainer before finishing.")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="odd", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sp = sub.add_parser("init", help="start an outcome contract")
+    sp.add_argument("outcome", help="one sentence: what the user will observe when this is done")
+    sp.add_argument("--type", help="outcome type (api/software/analytics/infra) for domain-specific guidance",
+                    choices=["api", "software", "analytics", "infra"])
+    sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("check", help="add an executable acceptance check")
+    sp.add_argument("desc", help="user-observable behavior this check proves")
+    sp.add_argument("--cmd", required=True, help="shell command exercising the real artifact")
+    sp.add_argument("--expect", help="substring that must appear in the output")
+    sp.add_argument("--expect-fail", action="store_true",
+                    help="command must exit non-zero (e.g. reproducing a bug before the fix)")
+    sp.add_argument("--kind", default="self",
+                    choices=["e2e", "reference", "spec", "differential", "unit", "self"],
+                    help="how this check verifies the outcome (default: self — the weakest). "
+                         "Use e2e for a check that runs the real artifact end-to-end.")
+    sp.add_argument("--source", help="for --kind spec: where the expected value is stated "
+                    "(e.g. 'task.md:L12' or the quoted requirement)")
+    sp.set_defaults(func=cmd_check)
+
+    sp = sub.add_parser("prove", help="run checks and record evidence")
+    sp.add_argument("nums", nargs="*", type=int, help="check numbers (default: all)")
+    sp.set_defaults(func=cmd_prove)
+
+    sp = sub.add_parser("status", help="show contract and evidence state")
+    sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("review", help="maintainer-lens audit of the current diff")
+    sp.add_argument("--base", default="HEAD", help="git ref to diff against (default: HEAD)")
+    sp.set_defaults(func=cmd_review)
+
+    sp = sub.add_parser("done", help="exit 0 iff the outcome is proven")
+    sp.set_defaults(func=cmd_done)
+
+    sp = sub.add_parser("archive", help="promote the proven contract to outcomes/")
+    sp.add_argument("--slug", help="spec filename (default: derived from the outcome)")
+    sp.add_argument("--force", action="store_true", help="overwrite an existing spec")
+    sp.set_defaults(func=cmd_archive)
+
+    sp = sub.add_parser("ci", help="run archived outcome specs as a regression suite")
+    sp.add_argument("specs", nargs="*", help="spec files (default: outcomes/*.outcome.json)")
+    sp.add_argument("--junit", help="write a JUnit XML report to this path")
+    sp.set_defaults(func=cmd_ci)
+
+    sp = sub.add_parser("reset", help="remove .odd state")
+    sp.set_defaults(func=cmd_reset)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,148 @@
+# API/Service outcome type
+# For: REST/GraphQL endpoints, microservices, webhooks
+
+type: api
+label: "API/Service"
+description: "REST endpoints, GraphQL APIs, microservices"
+extends: software
+
+validators:
+  - name: http_request
+    command: --http <method> <path> [--expect-status <code>] [--expect-json <pattern>] [--expect-time <ms>]
+    description: "Make HTTP request and validate response"
+    parameters:
+      method:
+        type: string
+        enum: [GET, POST, PUT, DELETE, PATCH, HEAD]
+        required: true
+        description: "HTTP method"
+      path:
+        type: string
+        required: true
+        description: "URL path relative to base (or full URL)"
+      expect_status:
+        type: number
+        required: false
+        default: 200
+        description: "Expected HTTP status code"
+      expect_json:
+        type: string
+        required: false
+        description: "JSON object or JSONPath pattern to match in response"
+      expect_time:
+        type: number
+        required: false
+        description: "Response time must be <= this (milliseconds)"
+      body:
+        type: string
+        required: false
+        description: "Request body (for POST/PUT)"
+      headers:
+        type: object
+        required: false
+        description: "HTTP headers to send"
+    examples:
+      - description: "Endpoint responds successfully"
+        command: --http GET /api/users/123 --expect-status 200
+      - description: "Response contains expected data"
+        command: --http POST /api/orders --body '{"items": [1,2]}' --expect-json '{"id": 1}'
+      - description: "Error handling works"
+        command: --http GET /api/users/invalid --expect-status 404
+      - description: "Response time acceptable"
+        command: --http GET /api/search --expect-time 500
+
+evidence:
+  - name: status_code
+    type: number
+    unit: http_code
+    aggregation: last
+  - name: response_time
+    type: number
+    unit: milliseconds
+    aggregation: average
+  - name: content_length
+    type: number
+    unit: bytes
+    aggregation: last
+  - name: schema_valid
+    type: bool
+    unit: null
+    aggregation: all_match
+  - name: response_body
+    type: string
+    unit: null
+    aggregation: last
+
+review_rules:
+  - name: error_handling
+    description: "Check error responses are documented"
+    pattern: "expect-status [4-5][0-9][0-9]"
+    severity: info
+    message: "Good: error cases are tested. Ensure error responses have descriptive messages."
+  - name: auth_validation
+    description: "Auth endpoints should be tested"
+    pattern: "auth|token|password"
+    severity: info
+    message: "Consider adding auth validation checks"
+  - name: pagination
+    description: "Large result sets should support pagination"
+    pattern: "users|items|results"
+    severity: info
+    message: "If result set can be large, test pagination works correctly"
+  - name: rate_limiting
+    description: "API should document rate limits"
+    pattern: "rate|limit|throttle"
+    severity: info
+    message: "Rate limiting behavior should be tested or documented"
+
+templates:
+  rest_endpoint:
+    outcome: "users can <action> via API endpoint"
+    checks:
+      - validator: http_request
+        parameters:
+          method: GET
+          path: /api/<resource>
+          expect_status: 200
+      - validator: http_request
+        parameters:
+          method: POST
+          path: /api/<resource>
+          body: '{"<field>": "<value>"}'
+          expect_status: 201
+      - validator: http_request
+        parameters:
+          method: GET
+          path: /api/<resource>/invalid
+          expect_status: 404
+
+  error_handling:
+    outcome: "API returns helpful error messages"
+    checks:
+      - validator: http_request
+        parameters:
+          method: GET
+          path: /api/<resource>/invalid
+          expect_status: 404
+          expect_json: '{"error": "not found"}'
+      - validator: http_request
+        parameters:
+          method: POST
+          path: /api/<resource>
+          body: '{"<invalid>": "data"}'
+          expect_status: 400
+          expect_json: '{"error": ".*required.*"}'
+
+  performance:
+    outcome: "API responds quickly under normal load"
+    checks:
+      - validator: http_request
+        parameters:
+          method: GET
+          path: /api/<resource>
+          expect_time: 500
+      - validator: http_request
+        parameters:
+          method: POST
+          path: /api/<resource>
+          expect_time: 1000

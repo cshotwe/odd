@@ -1,0 +1,148 @@
+# Data Analytics outcome type
+# For: data models, pipelines, schema changes, data quality
+
+type: data_analytics
+label: "Data Analytics"
+description: "Data models, pipelines, schema validation, data quality"
+extends: software
+
+validators:
+  - name: sql_query
+    command: --sql "<query>" [--validator <type>] [--expect-rows <spec>]
+    description: "Execute SQL query and validate result set"
+    parameters:
+      sql:
+        type: string
+        required: true
+        description: "SQL query to execute"
+      validator:
+        type: string
+        enum: [row_count, null_check, schema_check, freshness, value_range, distribution]
+        required: false
+        description: "Validation strategy for results"
+      expect_rows:
+        type: string
+        required: false
+        description: "Row count expectation: >=100, <1000, 500+, 100-500, etc."
+      columns:
+        type: array
+        required: false
+        description: "Expected column names (for schema_check)"
+      within:
+        type: string
+        required: false
+        description: "Time window for freshness checks (e.g., '1 day')"
+      allow_nulls:
+        type: bool
+        required: false
+        default: false
+        description: "Whether NULLs are acceptable in result"
+    examples:
+      - description: "Table exists and has data"
+        command: --sql "SELECT COUNT(*) FROM sales" --expect-rows 1000+
+      - description: "No NULL values in critical columns"
+        command: --sql "SELECT COUNT(*) FROM sales WHERE region IS NULL" --expect-rows 0
+      - description: "Schema matches specification"
+        command: --sql "DESC sales" --validator schema_check --columns [id, date, region, revenue]
+      - description: "Data is fresh"
+        command: --sql "SELECT MAX(updated_at) FROM sales" --validator freshness --within "1 day"
+
+evidence:
+  - name: row_count
+    type: number
+    unit: rows
+    aggregation: last
+    description: "Number of rows returned"
+  - name: null_ratio
+    type: number
+    unit: percent
+    aggregation: last
+    description: "Percentage of NULL values"
+  - name: execution_time
+    type: number
+    unit: milliseconds
+    aggregation: average
+    description: "Query execution time"
+  - name: distinct_count
+    type: number
+    unit: values
+    aggregation: last
+    description: "Number of distinct values"
+  - name: schema
+    type: object
+    unit: null
+    aggregation: last
+    description: "Table schema (columns, types)"
+
+review_rules:
+  - name: select_star
+    description: "Avoid SELECT * in data models"
+    pattern: "SELECT \\*"
+    severity: warning
+    message: "Specify needed columns explicitly; SELECT * makes schema changes brittle"
+  - name: missing_primary_key
+    description: "Check if table should have primary key"
+    pattern: "CREATE TABLE.*SELECT|INSERT.*SELECT"
+    severity: info
+    message: "Consider adding a primary key for data integrity"
+  - name: missing_timestamp
+    description: "Audit tables should have created/updated timestamps"
+    pattern: "CREATE TABLE"
+    severity: info
+    message: "Consider adding created_at/updated_at for audit trail"
+  - name: partition_strategy
+    description: "Large tables should consider partitioning"
+    pattern: "CREATE TABLE"
+    severity: info
+    message: "For tables expected >10M rows, consider partitioning strategy"
+
+templates:
+  new_model:
+    outcome: "users can query <resource> from the data warehouse"
+    checks:
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <resource>"
+          expect_rows: "1+"
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <resource> WHERE <id_column> IS NULL"
+          expect_rows: "0"
+      - validator: sql_query
+        parameters:
+          sql: "DESC <resource>"
+          validator: schema_check
+          columns: [id, created_at, updated_at]
+
+  pipeline_validation:
+    outcome: "data pipeline loads <source> into <destination>"
+    checks:
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <destination>"
+          expect_rows: "1000+"
+      - validator: sql_query
+        parameters:
+          sql: "SELECT MAX(loaded_at) FROM <destination>"
+          validator: freshness
+          within: "1 hour"
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <destination> WHERE <key> IS NULL"
+          expect_rows: "0"
+
+  data_quality:
+    outcome: "data in <table> meets quality standards"
+    checks:
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <table> WHERE <column> IS NULL"
+          expect_rows: "0"
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(DISTINCT <key>) FROM <table>"
+          expect_rows: "10000+"
+      - validator: sql_query
+        parameters:
+          sql: "SELECT COUNT(*) FROM <table> WHERE <column> < 0"
+          expect_rows: "0"

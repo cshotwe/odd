@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""odd-check-scope — detect unrequested code (scope creep not covered by checks).
+
+Compares the diff to the acceptance checks to find code paths not exercised by any check.
+
+Usage: odd-check-scope [--base HEAD]
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+
+def _root():
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def main():
+    p = argparse.ArgumentParser(prog="odd-check-scope")
+    p.add_argument("--base", default="HEAD")
+    args = p.parse_args()
+
+    contract_path = os.path.join(_root(), ".odd", "outcome.json")
+    if not os.path.exists(contract_path):
+        print("no contract; run: odd init && odd check")
+        sys.exit(1)
+
+    with open(contract_path) as f:
+        contract = json.load(f)
+
+    # Get the diff
+    root = _root()
+    diff = subprocess.run(
+        ["git", "diff", args.base, "--", ".", ":(exclude).odd"],
+        capture_output=True, text=True, cwd=root,
+    ).stdout
+
+    # Extract what was added
+    added_lines = [l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")]
+
+    # Extract what checks exercise
+    checks_cmds = " ".join(chk.get("cmd", "") for chk in contract.get("checks", []))
+
+    # Heuristic: look for error handling, try/except, validation
+    # that don't appear in any check command
+    warnings = []
+
+    # Error handling not in checks
+    error_lines = [l for l in added_lines if any(
+        sig in l.lower() for sig in ["error", "except", "raise", "fail"]
+    )]
+    for line in error_lines:
+        if not any(err_sig in checks_cmds for err_sig in ["error", "fail", "--invalid", "--bad"]):
+            warnings.append(
+                f"Error handling without test: '{line.strip()}'\n"
+                f"         Add a check that triggers this error, or remove it.")
+
+    # Defensive code (null checks, type checking)
+    defensive = [l for l in added_lines if any(
+        sig in l for sig in ["is None", "is not None", "if not ", "if isinstance"]
+    )]
+    if defensive and "edge" not in contract.get("outcome", "").lower():
+        for line in defensive[:3]:  # limit output
+            warnings.append(
+                f"Defensive code without mention in outcome: '{line.strip()}'\n"
+                f"         Does the outcome ask for this?")
+
+    if not warnings:
+        print("✓ scope appears tight; no obvious unrequested code")
+        sys.exit(0)
+
+    print("⚠️  potential scope creep:\n")
+    for w in warnings:
+        print(f"  {w}\n")
+
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

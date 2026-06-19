@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""odd-lint — scope analyzer for ODD contracts.
+
+Warns about check design patterns that often lead to scope creep or weak
+validation. Run before building:
+
+  odd-lint
+
+Reads `.odd/outcome.json` and suggests scope tightening.
+"""
+
+import json
+import os
+import re
+import sys
+
+
+def _root():
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def _path(p):
+    return os.path.join(_root(), p)
+
+
+def main():
+    contract_path = _path(".odd/outcome.json")
+    if not os.path.exists(contract_path):
+        print("no contract found (.odd/outcome.json); run: odd init")
+        sys.exit(1)
+
+    with open(contract_path) as f:
+        contract = json.load(f)
+
+    outcome = contract.get("outcome", "")
+    checks = contract.get("checks", [])
+
+    warnings = []
+
+    # Check 1: outcome has modal verbs or defensive language
+    if any(w in outcome.lower() for w in ("should", "may", "might", "could", "try")):
+        warnings.append(
+            "outcome uses uncertain language ('should', 'may', 'might'). "
+            "Rephrase as observable fact: 'users can...' not 'users should be able to...'")
+
+    # Check 2: outcome has no observable behavior word
+    obs = ("can", "will", "show", "display", "output", "return", "filter", "sort", "reject", "accept")
+    if not any(w in outcome.lower() for w in obs):
+        warnings.append(
+            "outcome doesn't contain an observable behavior verb (can, will, show, output, etc.). "
+            "Make it concrete: what does the user see/do differently?")
+
+    # Check 3: no checks at all
+    if not checks:
+        warnings.append("no acceptance checks defined; add at least 2 with: odd check")
+
+    # Check 4: too many checks (often a sign of over-specification)
+    if len(checks) > 8:
+        warnings.append(
+            f"{len(checks)} checks is a lot. Most outcomes need 2–5. "
+            "Are you testing the implementation (bad) instead of the observable behavior?")
+
+    # Check 5: checks don't invoke the real artifact
+    for i, chk in enumerate(checks, 1):
+        cmd = chk.get("cmd", "")
+        # Heuristic: if cmd has python -m unittest, pytest, etc., it's a unit test not acceptance
+        if any(unittest_sig in cmd for unittest_sig in ("pytest", "unittest", "-m pytest", "test_", "--tb=")):
+            warnings.append(
+                f"check #{i} ('{chk['desc']}'): looks like a unit test, not end-to-end. "
+                "Acceptance checks exercise the real artifact (CLI, API, server); "
+                "unit tests are project-specific regression gates.")
+        # If cmd has no obvious artifact invocation
+        if not any(artifact_sig in cmd for artifact_sig in ("./", "/", "python3 ", "npm ", "go ", "make ")):
+            warnings.append(
+                f"check #{i} ('{chk['desc']}'): unclear how this exercises the artifact. "
+                "Checks should be commands you'd run to verify the feature works for the user.")
+
+    # Check 6: check descriptions that are too vague
+    for i, chk in enumerate(checks, 1):
+        desc = chk.get("desc", "").lower()
+        if any(vague in desc for vague in ("works", "is correct", "passes", "ok", "fine", "good")):
+            warnings.append(
+                f"check #{i} description is vague ('{chk['desc']}'). "
+                f"Describe the observable behavior: "
+                f"'{desc.split()[0].capitalize()} [what users see]' is better.")
+
+    # Check 7: outcome + checks mismatch
+    if checks and outcome:
+        outcome_words = set(outcome.lower().split())
+        check_descs = " ".join(chk.get("desc", "").lower() for chk in checks)
+        # Very rough: if major outcome word doesn't appear in any check, might be scope mismatch
+        for word in outcome_words:
+            if len(word) > 4 and word not in check_descs and word not in ("users", "can", "the", "item", "list"):
+                pass  # too noisy, skip
+
+    if not warnings:
+        print("✓ contract looks good; no scope warnings.")
+        sys.exit(0)
+
+    print("scope warnings — review before building:\n")
+    for w in warnings:
+        print(f"  ⚠ {w}\n")
+
+    print("Fix what applies, then re-run: odd-lint")
+    sys.exit(1 if len(warnings) > 3 else 0)  # soft fail if only 1–3 warnings
+
+
+if __name__ == "__main__":
+    main()

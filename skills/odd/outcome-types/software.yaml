@@ -1,0 +1,88 @@
+# Software Engineering outcome type
+# Base type: shell command execution and output validation
+
+type: software
+label: "Software Engineering"
+description: "Features, bug fixes, CLI tools, endpoints"
+
+validators:
+  - name: shell_command
+    command: --cmd "<shell>" [--expect "<output>"] [--expect-fail]
+    description: "Execute shell command and validate exit code/output"
+    parameters:
+      cmd:
+        type: string
+        required: true
+        description: "Shell command to execute"
+      expect:
+        type: string
+        required: false
+        description: "Output must contain this substring"
+      expect_fail:
+        type: bool
+        required: false
+        description: "Command must exit non-zero (for error/bug scenarios)"
+    examples:
+      - description: "Feature works end-to-end"
+        command: --cmd "./report --from 2026-01-01" --expect "3 rows"
+      - description: "Bug is fixed"
+        command: --cmd "./report --invalid" --expect-fail
+      - description: "Backward compatibility maintained"
+        command: --cmd "./report" --expect "12 rows"
+
+evidence:
+  - name: exit_code
+    type: number
+    unit: null
+    aggregation: last
+  - name: stdout
+    type: string
+    unit: null
+    aggregation: last
+  - name: stderr
+    type: string
+    unit: null
+    aggregation: last
+  - name: execution_time
+    type: number
+    unit: milliseconds
+    aggregation: average
+
+review_rules:
+  - name: scope_creep
+    description: "Check for unrequested files/changes"
+    pattern: "add.*new (file|directory)"
+    severity: warning
+    message: "New files should have clear justification in the outcome"
+  - name: defensive_code
+    description: "Avoid unnecessary error handling"
+    pattern: "try.*except|if .* is not None"
+    severity: warning
+    message: "Handle only failure modes implied by the task"
+  - name: comments
+    description: "Avoid excessive comments"
+    pattern: "^[+]\\s*#"
+    severity: info
+    message: "Match surrounding code's comment density"
+
+templates:
+  feature:
+    outcome: "users can <feature>"
+    checks:
+      - validator: shell_command
+        parameters:
+          cmd: "<command showing feature works>"
+      - validator: shell_command
+        parameters:
+          cmd: "<backward compatibility check>"
+
+  bugfix:
+    outcome: "<user-observable bug is fixed>"
+    checks:
+      - validator: shell_command
+        parameters:
+          cmd: "<reproduce bug (should fail before fix)>"
+          expect_fail: true
+      - validator: shell_command
+        parameters:
+          cmd: "<reproduce bug (should succeed after fix)>"

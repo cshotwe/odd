@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""odd-analyze — analyze outcome + checks for cost and quality.
+
+Suggests improvements:
+- Check ordering (fast to slow)
+- Parallelizable checks
+- Cost per check
+- Scope tightness
+
+Usage:
+  odd-analyze
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+
+def _root():
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def _path(p):
+    return os.path.join(_root(), p)
+
+
+def estimate_check_cost(cmd):
+    """Estimate wall-clock cost of running a check (0–5 seconds)."""
+    # Heuristics
+    if any(sig in cmd for sig in ("sleep", "timeout")):
+        return 5
+    if any(sig in cmd for sig in ("curl", "http", "connect", "network")):
+        return 3
+    if any(sig in cmd for sig in ("pytest", "test", "-v")):
+        return 2
+    if any(sig in cmd for sig in ("python", "node", "ruby", "go")):
+        return 1
+    if any(sig in cmd for sig in ("grep", "echo", "ls")):
+        return 0.1
+    return 0.5  # default
+
+
+def can_parallelize(checks):
+    """Identify which checks can run in parallel (don't depend on each other)."""
+    # Very simple: checks that reference different files can parallelize
+    files_per_check = []
+    for chk in checks:
+        cmd = chk.get("cmd", "")
+        # Extract rough file references
+        files = set(re.findall(r"['\"]?([a-zA-Z0-9._/-]+\.[a-zA-Z]+)['\"]?", cmd))
+        files_per_check.append(files)
+
+    # Checks with no overlapping file refs can parallelize
+    parallelizable = []
+    for i in range(len(checks)):
+        for j in range(i + 1, len(checks)):
+            if not (files_per_check[i] & files_per_check[j]):
+                parallelizable.append((i, j))
+
+    return parallelizable
+
+
+def main():
+    contract_path = _path(".odd/outcome.json")
+    if not os.path.exists(contract_path):
+        print("no contract found; run: odd init")
+        sys.exit(1)
+
+    with open(contract_path) as f:
+        contract = json.load(f)
+
+    checks = contract.get("checks", [])
+    outcome = contract.get("outcome", "")
+
+    print(f"Outcome: {outcome}\n")
+    print(f"Checks ({len(checks)}):\n")
+
+    # Estimate costs
+    costs = []
+    for i, chk in enumerate(checks, 1):
+        cost = estimate_check_cost(chk.get("cmd", ""))
+        costs.append((i, cost, chk))
+        print(f"  #{i} ({cost:.1f}s est.) {chk['desc']}")
+
+    # Sorting suggestion
+    print("\n--- Recommendations ---\n")
+
+    # Sort by cost (fast first)
+    sorted_checks = sorted(enumerate(checks, 1), key=lambda x: estimate_check_cost(x[1].get("cmd", "")))
+    if sorted_checks != list(enumerate(checks, 1)):
+        print("1. Check ordering (fast to slow):")
+        print("   Current order: " + " → ".join(str(i) for i, _ in sorted_checks[:5]))
+        print("   Suggested order: " + " → ".join(str(i) for i, _ in sorted(enumerate(checks, 1),
+                                                                               key=lambda x: estimate_check_cost(x[1].get("cmd", "")))))
+        print("   (Fast checks catch failures early; reorder to save wall-clock time.)\n")
+
+    # Parallelization suggestion
+    parallelizable = can_parallelize(checks)
+    if parallelizable:
+        print("2. Parallelizable checks (can run simultaneously):")
+        for i, j in parallelizable[:3]:
+            print(f"   #{i} and #{j} have no file dependencies; can run in parallel.")
+        if len(parallelizable) > 3:
+            print(f"   ({len(parallelizable)} pairs total)")
+        print("   (Mark with --independent and use `odd prove --parallel` for speedup.)\n")
+
+    # Cost analysis
+    total_cost = sum(c for _, c, _ in costs)
+    print(f"3. Total wall-clock cost: ~{total_cost:.1f}s per prove")
+    if total_cost > 10:
+        print("   (>10s suggests too many or too-slow checks; consider splitting outcome.)\n")
+
+    # Scope check
+    if len(checks) > 7:
+        print(f"4. Scope: {len(checks)} checks is high for a single outcome.")
+        print("   Consider splitting into sub-outcomes with `odd-compose`.\n")
+
+    if len(checks) < 2:
+        print("4. Scope: only 1 check — likely incomplete. Add at least 1 regression check.\n")
+
+    print("✓ Done. Run `odd prove` when ready.")
+
+
+if __name__ == "__main__":
+    main()

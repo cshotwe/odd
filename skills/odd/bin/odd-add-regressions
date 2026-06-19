@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""odd-add-regressions — auto-discover and add regression checks.
+
+Scans the project for test files/commands and adds them as regression
+checks to the outcome.
+
+Usage:
+  cd <project>
+  odd init "your outcome"
+  odd add-regressions        # discovers and adds regression checks
+  odd status                 # review what was added
+  # agent then builds and proves
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+
+def _root():
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def find_test_commands():
+    """Discover test runner commands used in this project."""
+    commands = []
+    root = _root()
+
+    # Check 1: pytest
+    if os.path.exists(os.path.join(root, "pytest.ini")) or \
+       os.path.exists(os.path.join(root, "pyproject.toml")) or \
+       any(os.path.exists(os.path.join(root, p)) for p in ["tests", "test"]):
+        commands.append(("pytest", "pytest"))
+
+    # Check 2: unittest (Python)
+    if any(os.path.exists(os.path.join(root, p)) for p in ["tests", "test"]):
+        commands.append(("unittest", "python -m unittest discover -s . -p 'test_*.py'"))
+
+    # Check 3: npm/jest
+    if os.path.exists(os.path.join(root, "package.json")):
+        commands.append(("npm test", "npm test"))
+
+    # Check 4: go test
+    if any(os.path.exists(os.path.join(root, p)) for p in ["go.mod", "go.sum"]):
+        commands.append(("go test", "go test ./..."))
+
+    # Check 5: Makefile test target
+    if os.path.exists(os.path.join(root, "Makefile")):
+        r = subprocess.run(
+            ["grep", "-q", "^test:", os.path.join(root, "Makefile")],
+            capture_output=True,
+        )
+        if r.returncode == 0:
+            commands.append(("make test", "make test"))
+
+    return commands
+
+
+def main():
+    contract_path = os.path.join(_root(), ".odd", "outcome.json")
+    if not os.path.exists(contract_path):
+        sys.exit("no contract found; run: odd init")
+
+    with open(contract_path) as f:
+        contract = json.load(f)
+
+    # Find regressions
+    commands = find_test_commands()
+    if not commands:
+        print("no test commands detected; nothing to add")
+        sys.exit(0)
+
+    # Add as checks
+    added = 0
+    for name, cmd in commands:
+        # Avoid duplicates
+        if any(cmd in chk.get("cmd", "") for chk in contract.get("checks", [])):
+            continue
+
+        contract["checks"].append({
+            "desc": f"regression: existing tests pass ({name})",
+            "cmd": cmd,
+        })
+        added += 1
+        print(f"added check: {name}")
+
+    if added > 0:
+        with open(contract_path, "w") as f:
+            json.dump(contract, f, indent=2)
+        print(f"\n{added} regression check(s) added. Run: odd status")
+    else:
+        print("all test commands already present as checks")
+
+
+if __name__ == "__main__":
+    main()

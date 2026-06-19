@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""odd-validate-outcome — check if outcome is specific, testable, and clear.
+
+Warnings:
+- Hedged language ("should", "may", "might", "could")
+- Vague verbs ("works", "is correct", "is fine")
+- Implementation focus ("update the cache table")
+- Multiple behaviors ("add X and Y")
+- Grammatical issues
+
+Usage: odd-validate-outcome
+"""
+
+import json
+import os
+import sys
+
+
+def _root():
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+
+def main():
+    contract_path = os.path.join(_root(), ".odd", "outcome.json")
+    if not os.path.exists(contract_path):
+        print("no contract found; run: odd init")
+        sys.exit(1)
+
+    with open(contract_path) as f:
+        contract = json.load(f)
+
+    outcome = contract.get("outcome", "").lower()
+
+    issues = []
+
+    # Issue 1: hedged language
+    hedges = ["should", "may", "might", "could", "try to", "aim to", "attempt"]
+    for hedge in hedges:
+        if hedge in outcome:
+            issues.append(f"Hedged language ('{hedge}'): outcomes should be definite.")
+            break
+
+    # Issue 2: vague verbs
+    vague = ["work", "is correct", "is fine", "is good", "passes", "works properly"]
+    for v in vague:
+        if v in outcome:
+            issues.append(f"Vague verb ('{v}'): use concrete behavior (show, filter, return, accept).")
+            break
+
+    # Issue 3: implementation focus
+    impl = ["table", "database", "cache", "field", "variable", "function", "module"]
+    for i in impl:
+        if i in outcome:
+            issues.append(
+                f"Implementation focus ('{i}'): describe observable behavior, not how it's built.")
+            break
+
+    # Issue 4: too many behaviors (multiple "and" clauses)
+    ands = outcome.count(" and ")
+    if ands > 2:
+        issues.append(f"Too many behaviors ({ands} 'and' clauses): split into sub-outcomes.")
+
+    # Issue 5: no observable verb
+    obs_verbs = ["show", "display", "return", "filter", "sort", "accept", "reject",
+                 "print", "output", "appear", "disappear", "change", "validate"]
+    if not any(verb in outcome for verb in obs_verbs):
+        issues.append(
+            "No observable behavior verb: use 'show', 'filter', 'return', 'accept', etc.")
+
+    if not issues:
+        print("✓ outcome is clear and testable")
+        sys.exit(0)
+
+    print("⚠️  outcome issues:\n")
+    for issue in issues:
+        print(f"  - {issue}")
+
+    print(f"\nOutcome: '{contract.get('outcome', '')}'")
+    print("\nRevise to be more specific, concrete, and observable.")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

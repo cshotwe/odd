@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""odd-compose — combine two completed ODD tasks into a composite outcome.
+
+When two outcomes are independent and their implementations can coexist
+without conflict, compose them into a single larger outcome.
+
+Usage:
+  odd-compose <task_a_dir> <task_b_dir> --outcome <description>
+
+Example:
+  cd filter-by-date && odd init "users can filter by date"
+  cd ../filter-by-category && odd init "users can filter by category"
+  cd ../filter-combined && odd-compose ../filter-by-date ../filter-by-category \\
+    --outcome "users can filter by date AND category"
+
+This generates a new .odd/outcome.json that combines checks from both tasks.
+If the implementations don't conflict, the combined diff is just the union
+of the two diffs, no re-implementation needed.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+
+def main():
+    p = argparse.ArgumentParser(prog="odd-compose", description=__doc__)
+    p.add_argument("task_a", help="path to first completed task")
+    p.add_argument("task_b", help="path to second completed task")
+    p.add_argument("--outcome", required=True, help="description of composite outcome")
+    args = p.parse_args()
+
+    # Load both contracts
+    try:
+        with open(os.path.join(args.task_a, ".odd", "outcome.json")) as f:
+            contract_a = json.load(f)
+        with open(os.path.join(args.task_b, ".odd", "outcome.json")) as f:
+            contract_b = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        sys.exit(f"failed to load contracts: {e}")
+
+    # Combine checks
+    combined_checks = contract_a.get("checks", []) + contract_b.get("checks", [])
+
+    # Create composite contract
+    composite = {
+        "outcome": args.outcome,
+        "created": __import__("time").strftime("%Y-%m-%dT%H:%M:%S"),
+        "checks": combined_checks,
+        "_composed_from": [
+            {"task": args.task_a, "outcome": contract_a.get("outcome")},
+            {"task": args.task_b, "outcome": contract_b.get("outcome")},
+        ],
+    }
+
+    # Write to current directory
+    os.makedirs(".odd", exist_ok=True)
+    with open(".odd/outcome.json", "w") as f:
+        json.dump(composite, f, indent=2)
+
+    print(f"composite outcome created: {args.outcome}")
+    print(f"combined {len(contract_a.get('checks', []))} + {len(contract_b.get('checks', []))} = "
+          f"{len(combined_checks)} checks")
+    print()
+    print("Next steps:")
+    print(f"1. Copy or link implementations from {args.task_a} and {args.task_b}")
+    print("2. Run: odd prove")
+    print("3. Run: odd review")
+
+
+if __name__ == "__main__":
+    main()

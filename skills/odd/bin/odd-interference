@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""odd-interference — detect conflicts in factored outcomes.
+
+When you factor a large outcome into parallel sub-outcomes, check whether
+they'll conflict (overlapping files, breaking dependencies).
+
+Usage:
+  odd-interference <dir_a> <dir_b> [--strict]
+
+Outputs: "safe" or "risky: X, Y, Z" with reasons.
+"""
+
+import json
+import os
+import re
+import sys
+
+
+def extract_files_from_cmd(cmd):
+    """Heuristic: extract file references from a shell command."""
+    # Match quoted/unquoted filenames
+    files = set(re.findall(r'["\']?([a-zA-Z0-9._/-]+\.[a-zA-Z]+)["\']?', cmd))
+    # Also match directory names
+    files.update(re.findall(r'(?:cd|rm|mkdir|cp|mv)\s+([a-zA-Z0-9._/-]+)', cmd))
+    return files
+
+
+def main():
+    p_strict = "--strict" in sys.argv
+    dirs = [d for d in sys.argv[1:] if not d.startswith("-")]
+
+    if len(dirs) < 2:
+        sys.exit("usage: odd-interference <dir_a> <dir_b> [--strict]")
+
+    # Load both contracts
+    contracts = []
+    for d in dirs:
+        try:
+            path = os.path.join(d, ".odd", "outcome.json")
+            with open(path) as f:
+                contracts.append((d, json.load(f)))
+        except (OSError, json.JSONDecodeError) as e:
+            sys.exit(f"failed to load {d}: {e}")
+
+    # Analyze for conflicts
+    warnings = []
+
+    # Check 1: overlapping files
+    all_files = []
+    for d, contract in contracts:
+        files = set()
+        for chk in contract.get("checks", []):
+            files.update(extract_files_from_cmd(chk.get("cmd", "")))
+        all_files.append((d, files))
+
+    if len(all_files) == 2:
+        files_a, files_b = all_files[0][1], all_files[1][1]
+        overlap = files_a & files_b
+        if overlap:
+            warnings.append(
+                f"File overlap: {', '.join(overlap)}. "
+                f"These outcomes might conflict; consider sequential execution.")
+
+    # Check 2: database/schema operations (high-risk)
+    for d, contract in contracts:
+        for chk in contract.get("checks", []):
+            cmd = chk.get("cmd", "").lower()
+            if any(sig in cmd for sig in ("migrate", "schema", "alter table", "create table", "drop")):
+                warnings.append(
+                    f"{d}: detected schema operation. "
+                    f"Run after other migrations; may conflict with parallel work.")
+
+    # Check 3: outcome names hinting at dependencies
+    if len(contracts) == 2:
+        names = [contract.get("outcome", "").lower() for _, contract in contracts]
+        keywords = {
+            "before": ["init", "setup", "prepare", "create"],
+            "after": ["export", "finalize", "cleanup", "delete"],
+        }
+        for pos, kw_list in keywords.items():
+            if any(kw in names[0] for kw in kw_list):
+                if any(kw in names[1] for kw in keywords.get("before" if pos == "after" else "after", [])):
+                    warnings.append(
+                        f"Dependency hint: '{names[0]}' should run {pos} '{names[1]}'.")
+
+    if not warnings:
+        print("✓ safe: no detected conflicts (but review manually)")
+        sys.exit(0)
+
+    print("⚠️  interference detected:\n")
+    for w in warnings:
+        print(f"  - {w}")
+
+    if p_strict:
+        sys.exit(1)
+    else:
+        print("\nUsage: run sequentially, or review manually for conflicts.")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

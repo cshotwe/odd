@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""odd-template — expand common outcome patterns into outcome + checks.
+
+Usage:
+  odd-template add-cli-flag --flag <name> --description '<behavior>'
+  odd-template fix-bug --symptom '<symptom>'
+  odd-template add-endpoint --method <GET|POST> --path <path>
+
+Outputs an 'odd init' + 'odd check' sequence to copy-paste or pipe.
+"""
+
+import argparse
+import sys
+
+
+TEMPLATES = {
+    "add-cli-flag": {
+        "args": ["--flag", "--description"],
+        "outcome": 'users can invoke `prog --{flag}` to {description}',
+        "checks": [
+            {
+                "desc": "flag is accepted and changes behavior",
+                "cmd": "./<app_name> --{flag}",
+                "expect": "<observable result>",
+            },
+            {
+                "desc": "program works without the flag (regression)",
+                "cmd": "./<app_name>",
+                "expect": "<original behavior>",
+            },
+        ],
+    },
+    "fix-bug": {
+        "args": ["--symptom"],
+        "outcome": "the issue where {symptom} is fixed",
+        "checks": [
+            {
+                "desc": "original symptom is reproducible",
+                "cmd": "<command to reproduce bug>",
+                "expect_fail": True,
+            },
+            {
+                "desc": "bug is fixed",
+                "cmd": "<command showing fixed behavior>",
+                "expect": "<expected output>",
+            },
+        ],
+    },
+    "add-endpoint": {
+        "args": ["--method", "--path"],
+        "outcome": "users can {method} {path} and get the expected response",
+        "checks": [
+            {
+                "desc": "endpoint responds to {method} {path}",
+                "cmd": "curl -X {method} http://localhost:8000{path}",
+                "expect": "<status or response fragment>",
+            },
+            {
+                "desc": "endpoint returns correct content-type",
+                "cmd": "curl -I -X {method} http://localhost:8000{path} | grep -i content-type",
+                "expect": "application/json",
+            },
+            {
+                "desc": "other endpoints still work (regression)",
+                "cmd": "curl http://localhost:8000/health",
+                "expect": "ok",
+            },
+        ],
+    },
+}
+
+
+def expand_template(name, params):
+    """Expand template with parameters."""
+    if name not in TEMPLATES:
+        sys.exit(f"unknown template: {name}\nAvailable: {', '.join(TEMPLATES)}")
+
+    template = TEMPLATES[name]
+    # Build param dict from args
+    param_dict = {}
+    for key in template["args"]:
+        key_name = key.lstrip("-")
+        if key_name not in params:
+            sys.exit(f"missing required parameter: {key}")
+        param_dict[key_name] = params[key_name]
+
+    # Expand outcome
+    outcome = template["outcome"].format(**param_dict)
+
+    # Expand checks
+    checks = template["checks"]
+    expanded = []
+    for chk in checks:
+        expanded_chk = {}
+        for k, v in chk.items():
+            if isinstance(v, str):
+                expanded_chk[k] = v.format(**param_dict)
+            else:
+                expanded_chk[k] = v
+        expanded.append(expanded_chk)
+
+    return outcome, expanded
+
+
+def main():
+    p = argparse.ArgumentParser(prog="odd-template", description=__doc__)
+    p.add_argument("template", help="template name (add-cli-flag, fix-bug, add-endpoint)")
+    p.add_argument("--flag", help="flag name (for add-cli-flag)")
+    p.add_argument("--description", help="description of flag behavior")
+    p.add_argument("--symptom", help="symptom description (for fix-bug)")
+    p.add_argument("--method", help="HTTP method (for add-endpoint)")
+    p.add_argument("--path", help="API path (for add-endpoint)")
+
+    args = p.parse_args()
+
+    params = {
+        k: v for k, v in vars(args).items()
+        if v is not None and k != "template"
+    }
+
+    outcome, checks = expand_template(args.template, params)
+
+    print(f'odd init "{outcome}"\n')
+    for i, chk in enumerate(checks, 1):
+        cmd = f'--cmd "{chk["cmd"]}"'
+        if "expect" in chk:
+            cmd += f' --expect "{chk["expect"]}"'
+        if chk.get("expect_fail"):
+            cmd += " --expect-fail"
+        print(f'odd check "{chk["desc"]}" {cmd}')
+
+    print("\n# Edit the placeholders (<app_name>, etc.) above, then paste the output into your shell.")
+
+
+if __name__ == "__main__":
+    main()
