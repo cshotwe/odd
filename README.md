@@ -21,10 +21,25 @@ checks against the REAL artifact, review the diff like a maintainer.** A skill
 + a small CLI for coding agents (Claude Code), with a Stop hook that won't let
 the agent finish until the outcome is actually proven.
 
-Why? [METR found](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/)
-only ~50% of test-passing AI PRs would actually merge. ODD targets the two
-things that matter: did the artifact do what the user asked, and would a
-maintainer take the diff.
+## Why
+
+Two findings motivate ODD ([full grounding](docs/research.md)):
+
+- **Passing tests ≠ mergeable code.** [METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/)
+  had maintainers review 296 AI PRs that *passed* SWE-bench's grader — only
+  ~48–50% would actually merge. The dominant rejection reasons were code
+  quality, scope creep, and collateral breakage; "doesn't solve the issue" was
+  the *rarest*. Optimizing for "tests pass" optimizes the wrong objective.
+- **Long process prompts make agents worse.** [TDAD (2026)](https://arxiv.org/abs/2603.17973)
+  found that adding TDD *procedural instructions* to an agent's prompt raised
+  regressions to **9.94% — worse than no intervention (6.08%)**: ritual prompts
+  crowd out the repo context the model needs. What helped (−70%) was *targeted
+  context*, not the ritual. So a methodology you hand an agent must be **short**.
+
+ODD's response: the skill is a ~40-line four-step loop (enforcement lives
+out-of-band in a CLI + Stop hook, costing zero prompt tokens during the build),
+and "done" requires *fresh evidence from running the real artifact*, not
+self-written unit tests that encode the same misunderstanding as the code.
 
 ## The loop
 
@@ -111,6 +126,23 @@ Working state lives in `.odd/` (`outcome.json` + tree-fingerprinted
 `evidence.json`); durable specs live in committed `outcomes/`.
 
 No dependencies beyond the Python 3.8+ standard library.
+
+## Results
+
+Measured on four benchmark suites — two we authored, two published external
+benchmarks graded by their own harnesses ([full results](docs/results.md)):
+
+| Suite | Headline |
+|---|---|
+| **SWE-bench Lite** (official Docker grader) | ODD **12/15** resolved vs Superpowers 9/15, with **~5× smaller diffs** (12.6 vs 63.8 lines avg) |
+| **ProgramBench** (hidden behavioral tests) | ODD **56.2%** (+25.8 pts over baseline) — top quality arm, reversing the "skills hurt" result |
+| **Custom A/B** (outcome + merge-readiness) | ODD **62.5%** outcome / **81.2%** merge-ready vs 25% / 53.7% |
+| **SkillsBench** (21 paired tasks) | **net-zero** — surfaced the self-oracle failure mode that drove the `--kind e2e` gate |
+
+**Honest takeaway:** ODD's first-order value is outcome quality and diff
+discipline (clear on SWE-bench Lite and ProgramBench), not a universal win on
+every harness (net-zero on SkillsBench) — and it costs extra wall-clock.
+Single-run agent A/B is noisy; treat any delta below N≥3/cell as directional.
 
 ## License
 

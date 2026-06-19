@@ -29,26 +29,18 @@ For a bug fix, the first check is the user's reproduction, recorded
 *failing* before you change anything (`--expect-fail` flips later — update
 it to assert the fixed behavior once you understand it).
 
-**Check `--kind` is how you verify, and it is load-bearing — pick the strongest
-the task allows:**
-- `e2e` — runs the real artifact the way the user/grader does and observes the
-  outcome. **Required.** This is what "the outcome actually worked" means.
-- `reference` — diff your build against a *provided* oracle (a binary, golden
-  file, or endpoint you did NOT write). Strongest when available.
-- `spec` — assert a value quoted verbatim from the task/docs (needs `--source`).
-- `differential` — agreement with an independent second derivation of the answer.
-- `unit` / `self` — tests an internal function or a self-defined threshold.
-  **These cannot satisfy the gate** and prove nothing about the outcome.
+**Check `--kind` is load-bearing — pick the strongest the task allows:** `e2e`
+(runs the real artifact as the user/grader does — **required**) > `reference`
+(diff against a *provided* oracle you did NOT write) > `spec` (a value quoted
+verbatim from the task, needs `--source`) > `differential` > `unit`/`self`
+(internal function or self-defined threshold — **cannot satisfy the gate**).
 
 **The trap this prevents (it has bitten real runs):** do NOT build your own
-simulator / harness / threshold and treat passing *it* as proof. A check you
-author against code you wrote agrees with itself by construction — it can be
-green while the real grader scores zero. If the task ships an evaluation entry
-point, your e2e check must invoke *that*, not a reimplementation. Run the actual
-thing, end to end, and look at what it really produced.
-
-If you cannot phrase any executable e2e check, that means you don't yet know
-what the user wants — re-read the request or ask, don't guess.
+simulator/harness/threshold and treat passing *it* as proof — a check you author
+against code you wrote agrees with itself by construction, and can be green while
+the real grader scores zero. If the task ships an evaluation entry point, invoke
+*that*. If you cannot phrase any executable e2e check, you don't yet know what
+the user wants — re-read the request or ask, don't guess.
 
 ## 2. Build
 
@@ -101,18 +93,11 @@ work — it passes before you write a single line.
 
 ## Outcomes outlive the task: archive + ci
 
-Once proven, promote the contract into a durable spec the repo keeps:
-
-```
-odd archive        # .odd/outcome.json -> outcomes/<slug>.outcome.json
-```
-
-Archived specs are ODD's regression suite — agent-native, not TDD: each is
-the promise the code makes to users (one outcome sentence + black-box checks
-against the real artifact; no framework, any language, readable in a few
-hundred tokens). `odd ci` (optionally `--junit report.xml`) re-runs every
-spec exactly like a unit-test job — wire it into CI so every future change
-re-proves every shipped outcome. When a change legitimately alters a promise,
-the spec edit appears in the diff: contract changes are reviewed, never
-silent. When you later work near an archived outcome, read its spec first —
-it is the distilled context of what must keep working.
+Once proven, `odd archive` promotes the contract to a durable
+`outcomes/<slug>.outcome.json` spec. Archived specs are ODD's regression suite
+— each is the promise the code makes to users (one outcome sentence + black-box
+checks against the real artifact). `odd ci` (optionally `--junit report.xml`)
+re-runs every spec like a unit-test job. Contract changes show up as spec edits
+in the diff, so they're reviewed, never silent. When you work near an archived
+outcome, read its spec first — it's the distilled context of what must keep
+working.
