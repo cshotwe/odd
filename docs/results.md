@@ -27,7 +27,7 @@ lines, etc.) echo ODD's own scope rules and were authored in this project, so
 merge-risk is a **secondary diagnostic** — raw lines/files are shown so the
 diffs can be judged directly.
 
-- Model: `databricks-claude-sonnet-4-6`; swebench 4.1.0; Docker grader.
+- Model: `claude-sonnet-4-6`; swebench 4.1.0; Docker grader.
 - The same autonomous-mode instruction is applied to both conditions, so
   neither is advantaged.
 
