@@ -155,6 +155,16 @@ yardstick. ² ProgramBench's "Superpowers" arm is its TDD skill (skill-only, as
 the [original experiment](https://x.com/kunchenguid/status/2064196344244531404)
 injected it). Cost was tracked only on ProgramBench; `—` = condition not run.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=cshotwe%2Fodd&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=cshotwe/odd&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=cshotwe/odd&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=cshotwe/odd&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
