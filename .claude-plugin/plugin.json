@@ -1,0 +1,20 @@
+{
+  "name": "odd",
+  "version": "0.1.0",
+  "description": "Outcome-Driven Development: declare the outcome, prove it against the real artifact, review the diff like a maintainer. A Stop hook refuses to certify done without a passing end-to-end check.",
+  "author": {
+    "name": "Cameron Shotwell",
+    "url": "https://github.com/cshotwe"
+  },
+  "homepage": "https://github.com/cshotwe/odd",
+  "repository": "https://github.com/cshotwe/odd",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "outcome-driven-development",
+    "testing",
+    "code-review",
+    "workflows"
+  ],
+  "hooks": "./hooks/hooks.json"
+}

@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_MD="${SCRIPT_DIR}/../SKILL.md"
+ODD_BIN="$(cd "${SCRIPT_DIR}/../bin" && pwd)/odd"
 
 skill_content="$(cat "$SKILL_MD" 2>/dev/null || echo "Error reading ODD SKILL.md")"
 
@@ -23,7 +24,8 @@ escape_for_json() {
 }
 
 skill_escaped=$(escape_for_json "$skill_content")
-context="<EXTREMELY_IMPORTANT>\nYou MUST follow the Outcome-Driven Development (ODD) workflow below for this task. The \`odd\` CLI is installed at .claude/skills/odd/bin/odd (also on PATH as \`odd\`). Use it: \`odd init\`, \`odd check\`, \`odd prove\`, \`odd review\`. Do not declare the task done until \`odd prove\` shows fresh passing evidence.\n\n${skill_escaped}\n</EXTREMELY_IMPORTANT>"
+odd_bin_escaped=$(escape_for_json "$ODD_BIN")
+context="<EXTREMELY_IMPORTANT>\nYou MUST follow the Outcome-Driven Development (ODD) workflow below for this task. The \`odd\` CLI is at ${odd_bin_escaped} — invoke it by that full path (e.g. \`${odd_bin_escaped} init\`), or add its directory to PATH first. Use it: \`odd init\`, \`odd check\`, \`odd prove\`, \`odd review\`. Do not declare the task done until \`odd prove\` shows fresh passing evidence.\n\n${skill_escaped}\n</EXTREMELY_IMPORTANT>"
 
 # Emit in the formats Claude Code / ACP and the SDK standard both read.
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then

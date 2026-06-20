@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "odd",
+  "description": "Outcome-Driven Development for coding agents — prove the artifact, review the diff, merge with confidence.",
+  "owner": {
+    "name": "Cameron Shotwell",
+    "url": "https://github.com/cshotwe"
+  },
+  "plugins": [
+    {
+      "name": "odd",
+      "description": "Declare the outcome, prove it against the real artifact, review the diff like a maintainer. Stop hook gates 'done' on a passing end-to-end check.",
+      "source": "./",
+      "category": "workflows"
+    }
+  ]
+}

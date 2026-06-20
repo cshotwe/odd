@@ -58,6 +58,16 @@ The agent drives this autonomously once the skill is installed:
 
 ## Install
 
+**As a Claude Code plugin** (recommended — registers the skill + hooks globally):
+
+```
+/plugin marketplace add cshotwe/odd
+/plugin install odd@odd
+```
+
+**Or into a single project** (copies the skill into `.claude/` and wires the
+Stop hook in that project's `settings.json`):
+
 ```bash
 ./install.sh /path/to/your/project
 echo ".odd/" >> /path/to/your/project/.gitignore
