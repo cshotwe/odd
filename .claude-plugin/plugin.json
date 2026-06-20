@@ -15,6 +15,5 @@
     "testing",
     "code-review",
     "workflows"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
