@@ -1,0 +1,13 @@
+task,difficulty,condition,reward,cost_usd,in_tok,out_tok,cacheR_tok,cacheW_tok,sp_skill_calls,status,jobdir,cost_note
+court-form-filling,easy,noskill,0.0,0.7841,23,20504,1084980,40270,0,done,jobs/sp_noskill_court-form-filling_0620_022653,
+court-form-filling,easy,superpowers,0.0,0.7459,23,18841,984254,44786,6,done,jobs/sp_superpowers_court-form-filling_0620_022653,
+dialogue-parser,easy,noskill,0.833,0.4465,8,19790,229158,21562,0,done,jobs/sp_noskill_dialogue-parser_0620_022653,
+dialogue-parser,easy,superpowers,0.0,0.3074,9,9959,235663,23266,7,done,jobs/sp_superpowers_dialogue-parser_0620_022653,
+offer-letter-generator,easy,noskill,0.0,0.2128,9,6043,224215,14620,0,done,jobs/sp_noskill_offer-letter-generator_0620_022653,
+offer-letter-generator,easy,superpowers,0.0,0.2994,17,5932,502348,15903,9,done,jobs/sp_superpowers_offer-letter-generator_0620_022653,
+powerlifting-coef-calc,easy,noskill,1.0,0.3707,12,7497,328636,42561,0,done,jobs/sp_noskill_powerlifting-coef-calc_0620_022653,
+powerlifting-coef-calc,easy,superpowers,1.0,0.8539,32,18661,1395568,41395,16,done,jobs/sp_superpowers_powerlifting-coef-calc_0620_022653,
+adaptive-cruise-control,medium,noskill,1.0,1.4918,39,58193,1607866,36371,0,done,jobs/sp_noskill_adaptive-cruise-control_0620_022653,
+adaptive-cruise-control,medium,superpowers,0.0,1.8256,41,59869,2033181,84670,12,DNF_timeout,jobs/sp_rerun_superpowers_adaptive-cruise-control_0620_043932,"measured from Claude Code session transcript (acp_cost.py); 30-min wall cap, did not converge; result.json absent so benchflow logged nothing"
+azure-bgp-oscillation-route-leak,medium,noskill,0.0,0.5313,8,23030,165508,36320,0,done,jobs/sp_noskill_azure-bgp-oscillation-route-leak_0620_022653,
+azure-bgp-oscillation-route-leak,medium,superpowers,0.0,0.9394,40,20244,1721568,31775,10,done,jobs/sp_superpowers_azure-bgp-oscillation-route-leak_0620_022653,
