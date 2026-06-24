@@ -14,10 +14,11 @@ and `skills/odd/SKILL.md` for the agent loop.
   `package.json`, or lint config. "Running the app" means invoking the CLI; CI
   for the methodology itself is `odd ci` over `outcomes/*.outcome.json` specs
   (none are committed in this repo).
-- **The CLI is the application.** Run it directly from source without
-  installing: `python3 skills/odd/bin/odd <command>` (or `skills/odd/bin/odd`,
-  since the `bin/` scripts are executable). The subcommands are
-  `init / check / prove / status / review / done / archive / ci / reset`.
+- **The CLI is the application.** After the Cloud Agent VM boots, `odd` is on
+  PATH (via `.cursor/environment.json`). You can also run
+  `python3 skills/odd/bin/odd <command>` or `skills/odd/bin/odd` directly. The
+  subcommands are `init / check / prove / status / review / done / archive / ci /
+  reset`.
 - **`odd` must run inside a git repository.** It calls `git rev-parse
   --show-toplevel` to locate the project root and fingerprints the working tree
   via `git diff`/`git status`; outside a repo it falls back to `cwd` and tree

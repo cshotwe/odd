@@ -1,0 +1,4 @@
+{
+  "install": "ln -sf \"${PWD}/skills/odd/bin/odd\" /usr/local/bin/odd && chmod +x skills/odd/bin/odd skills/odd/bin/odd-* skills/odd/hooks/session-start 2>/dev/null || true",
+  "terminals": []
+}
