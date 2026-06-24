@@ -64,6 +64,21 @@ The agent drives this autonomously once the skill is installed:
 /plugin install odd@odd
 ```
 
+**As a Cursor integration** (registers the skill, sessionStart hook, and stop
+gate in `.cursor/`):
+
+```bash
+./install-cursor.sh /path/to/your/project
+echo ".odd/" >> /path/to/your/project/.gitignore
+```
+
+Or clone this repo into a project that already has `.cursor/hooks.json` and
+`.cursor/skills/odd` committed (as in the ODD repo itself).
+
+On **Cursor desktop**, the `stop` hook blocks finishing until `odd done` passes.
+**Cloud Agents** do not run `stop` or `sessionStart` hooks yet — agents must
+follow the ODD skill and run `odd prove && odd done` before declaring complete.
+
 **Or into a single project** (copies the skill into `.claude/` and wires the
 Stop hook in that project's `settings.json`):
 

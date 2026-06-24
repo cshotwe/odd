@@ -27,10 +27,11 @@ skill_escaped=$(escape_for_json "$skill_content")
 odd_bin_escaped=$(escape_for_json "$ODD_BIN")
 context="<EXTREMELY_IMPORTANT>\nYou MUST follow the Outcome-Driven Development (ODD) workflow below for this task. The \`odd\` CLI is at ${odd_bin_escaped} — invoke it by that full path (e.g. \`${odd_bin_escaped} init\`), or add its directory to PATH first. Use it: \`odd init\`, \`odd check\`, \`odd prove\`, \`odd review\`. Do not declare the task done until \`odd prove\` shows fresh passing evidence.\n\n${skill_escaped}\n</EXTREMELY_IMPORTANT>"
 
-# Emit in the formats Claude Code / ACP and the SDK standard both read.
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+# Emit formats for Claude Code (hookSpecificOutput), Cursor (additional_context),
+# and legacy SDK consumers (top-level additionalContext).
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ] && [ -z "${CURSOR_TRACE_ID:-}" ]; then
   printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$context"
 else
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  },\n  "additionalContext": "%s"\n}\n' "$context" "$context"
+  printf '{\n  "additional_context": "%s",\n  "additionalContext": "%s",\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$context" "$context" "$context"
 fi
 exit 0

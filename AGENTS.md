@@ -3,8 +3,9 @@
 ## Cursor Cloud specific instructions
 
 `odd` is a single-purpose CLI for Outcome-Driven Development, distributed as a
-Claude Code plugin/skill. See `README.md` for the user-facing workflow and the
-full CLI reference, and `skills/odd/SKILL.md` for the agent loop.
+Claude Code plugin/skill and as a Cursor integration (`.cursor/` config in this
+repo). See `README.md` for the user-facing workflow and the full CLI reference,
+and `skills/odd/SKILL.md` for the agent loop.
 
 - **No dependencies, no build step.** Everything is pure Python 3.8+ standard
   library (`python3` is already on the VM). There is nothing to `pip install`,
@@ -32,6 +33,12 @@ full CLI reference, and `skills/odd/SKILL.md` for the agent loop.
   `skills/odd/hooks/outcome_gate.py`) only report `proven` when at least one
   `--kind e2e` check passes; all-green `self`/`unit` checks report `unverified`
   and the Stop hook exits 2 to block finishing.
-- **Project install:** `./install.sh /path/to/project` copies the skill into
-  that project's `.claude/skills/odd/` and registers the Stop hook in its
-  `.claude/settings.json`.
+- **Cursor integration:** This repo ships `.cursor/hooks.json` (sessionStart +
+  stop), `.cursor/rules/odd-workflow.mdc`, and a skill symlink at
+  `.cursor/skills/odd`. Install into other projects with `./install-cursor.sh
+  /path/to/project`. **Cloud Agents do not run `sessionStart` or `stop` hooks
+  yet** — you must follow the ODD workflow from this file and `skills/odd/SKILL.md`,
+  and run `odd prove && odd done` before declaring a task complete.
+- **Claude Code project install:** `./install.sh /path/to/project` copies the
+  skill into that project's `.claude/skills/odd/` and registers the Stop hook in
+  its `.claude/settings.json`.
