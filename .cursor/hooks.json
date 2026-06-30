@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "bash skills/odd/hooks/session-start",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 skills/odd/hooks/outcome_gate.py",
+        "loop_limit": 5
+      }
+    ]
+  }
+}

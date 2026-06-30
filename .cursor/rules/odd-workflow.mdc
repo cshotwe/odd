@@ -1,0 +1,34 @@
+---
+description: Outcome-Driven Development — declare the outcome, prove the real artifact, review the diff
+alwaysApply: true
+---
+
+# Outcome-Driven Development (ODD)
+
+When implementing a feature, fixing a bug, or making any code change the user asked for, follow the ODD workflow in @skills/odd/SKILL.md.
+
+## Pipeline
+
+1. **Plan** (no `.odd/outcome.json` yet) — @skills/odd-plan/SKILL.md: `odd from-spec specs/<slug>.md` or `odd init` + `odd check`
+2. **Build** — @skills/odd/SKILL.md: build → `odd prove` → `odd review`
+
+## CLI
+
+The `odd` CLI lives at `skills/odd/bin/odd` (or `.cursor/skills/odd/bin/odd` after `install-cursor.sh`). Invoke by full path or add its `bin/` directory to PATH.
+
+## Four steps
+
+1. **Intent** — `odd init "<user-observable outcome>"`, then `odd check` with **at least one `--kind e2e`** check that runs the real artifact end-to-end.
+2. **Build** — smallest change that achieves the outcome; match surrounding style exactly.
+3. **Prove** — `odd prove` runs every check and records evidence. Re-run after any code edit (evidence goes stale).
+4. **Review** — `odd review`, then read the full diff and cut anything that doesn't serve the outcome.
+
+## Done gate
+
+Do **not** declare the task complete until `odd done` exits 0. That requires fresh evidence and a **passing end-to-end check** — all-green `self`/`unit` checks alone report `unverified`, not `proven`.
+
+On Cursor desktop, the `stop` hook enforces this when `.odd/outcome.json` exists. Cloud Agents do not run `stop` hooks yet — follow this rule and run `odd prove && odd done` before finishing.
+
+## Archive regressions
+
+After a proven outcome, `odd archive` promotes checks to `outcomes/*.outcome.json`; `odd ci` re-runs them as a regression suite.
