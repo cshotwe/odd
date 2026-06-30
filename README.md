@@ -134,6 +134,8 @@ odd ci --junit report.xml    # same, as JUnit XML for CI
 |---|---|
 | `odd init` | Start an outcome contract |
 | `odd check` | Add an acceptance check (`--kind e2e` runs the real artifact) |
+| `odd from-spec` | Load `specs/*.md` into `.odd/outcome.json` (`--dry-run` / `--apply`) |
+| `odd spec` | Scaffold (`spec init`) or validate (`spec validate`) feature specs |
 | `odd prove` | Run all checks, record evidence fingerprinted to the tree |
 | `odd review` | Maintainer-lens diff audit |
 | `odd done` | Exit 0 iff the outcome is proven (a passing e2e check exists) |
@@ -145,6 +147,11 @@ odd ci --junit report.xml    # same, as JUnit XML for CI
 Helper tools: `odd-lint` (scope-creep warnings), `odd-template` (pattern
 expansion), `odd-analyze`, `odd-compose`, `odd-check-scope`,
 `odd-validate-outcome`, `odd-interference`, `odd-add-regressions`.
+
+**Planning pipeline:** write a feature spec in `specs/` (see `specs/README.md`),
+then `odd from-spec specs/<slug>.md --apply` to create the outcome contract.
+The **odd-plan** skill guides spec → contract; the **odd** skill handles build →
+prove → review.
 
 Working state lives in `.odd/` (`outcome.json` + tree-fingerprinted
 `evidence.json`); durable specs live in committed `outcomes/`.

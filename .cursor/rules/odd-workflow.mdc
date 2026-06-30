@@ -7,6 +7,11 @@ alwaysApply: true
 
 When implementing a feature, fixing a bug, or making any code change the user asked for, follow the ODD workflow in @skills/odd/SKILL.md.
 
+## Pipeline
+
+1. **Plan** (no `.odd/outcome.json` yet) — @skills/odd-plan/SKILL.md: `odd from-spec specs/<slug>.md` or `odd init` + `odd check`
+2. **Build** — @skills/odd/SKILL.md: build → `odd prove` → `odd review`
+
 ## CLI
 
 The `odd` CLI lives at `skills/odd/bin/odd` (or `.cursor/skills/odd/bin/odd` after `install-cursor.sh`). Invoke by full path or add its `bin/` directory to PATH.

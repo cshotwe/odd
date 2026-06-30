@@ -10,6 +10,10 @@ sees what they asked for, and a maintainer would merge the diff.**
 
 Four steps. Spend your effort on 1 and 3, not on process.
 
+**No contract yet?** If the user gave a spec in `specs/` or clear requirements in the
+message, run the **odd-plan** skill first (`odd from-spec` or manual `odd init`/`odd check`).
+If requirements are vague, ideate a spec before planning.
+
 ## 1. Intent — before touching code
 
 Write the outcome as the user would observe it, then 2–5 acceptance checks

@@ -9,8 +9,9 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 # ODD is a self-contained skill: copy the whole skills/odd/ tree (SKILL.md +
 # bin/ + hooks/ + outcome-types/) as one unit.
 mkdir -p "$TARGET/.claude/skills"
-rm -rf "$TARGET/.claude/skills/odd"
+rm -rf "$TARGET/.claude/skills/odd" "$TARGET/.claude/skills/odd-plan"
 cp -r "$SRC/skills/odd" "$TARGET/.claude/skills/odd"
+cp -r "$SRC/skills/odd-plan" "$TARGET/.claude/skills/odd-plan"
 chmod +x "$TARGET/.claude/skills/odd/bin/"* 2>/dev/null || true
 
 SETTINGS="$TARGET/.claude/settings.json"
@@ -40,6 +41,7 @@ cat <<EOF
 
 ODD installed into $TARGET/.claude/
   - skill:     .claude/skills/odd/SKILL.md            (auto-discovered by Claude Code)
+  - plan:      .claude/skills/odd-plan/SKILL.md
   - cli:       .claude/skills/odd/bin/odd
   - stop gate: .claude/skills/odd/hooks/outcome_gate.py (registered in settings.json)
 

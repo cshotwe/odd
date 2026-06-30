@@ -18,7 +18,7 @@ and `skills/odd/SKILL.md` for the agent loop.
   PATH (via `.cursor/environment.json`). You can also run
   `python3 skills/odd/bin/odd <command>` or `skills/odd/bin/odd` directly. The
   subcommands are `init / check / prove / status / review / done / archive / ci /
-  reset`.
+  reset / from-spec / spec`.
 - **`odd` must run inside a git repository.** It calls `git rev-parse
   --show-toplevel` to locate the project root and fingerprints the working tree
   via `git diff`/`git status`; outside a repo it falls back to `cwd` and tree
@@ -35,11 +35,15 @@ and `skills/odd/SKILL.md` for the agent loop.
   `--kind e2e` check passes; all-green `self`/`unit` checks report `unverified`
   and the Stop hook exits 2 to block finishing.
 - **Cursor integration:** This repo ships `.cursor/hooks.json` (sessionStart +
-  stop), `.cursor/rules/odd-workflow.mdc`, and a skill symlink at
-  `.cursor/skills/odd`. Install into other projects with `./install-cursor.sh
-  /path/to/project`. **Cloud Agents do not run `sessionStart` or `stop` hooks
-  yet** — you must follow the ODD workflow from this file and `skills/odd/SKILL.md`,
-  and run `odd prove && odd done` before declaring a task complete.
+  stop), `.cursor/rules/odd-workflow.mdc`, and skills at `.cursor/skills/odd`
+  and `.cursor/skills/odd-plan`. Install into other projects with
+  `./install-cursor.sh /path/to/project`. **Cloud Agents do not run
+  `sessionStart` or `stop` hooks yet** — follow the ODD workflow from this file
+  and `skills/odd/SKILL.md`, and run `odd prove && odd done` before declaring a
+  task complete.
+- **Planning:** Feature specs live in `specs/*.md`. Use `odd spec init`,
+  `odd spec validate`, then `odd from-spec specs/<slug>.md --apply` before
+  building. See `skills/odd-plan/SKILL.md`.
 - **Claude Code project install:** `./install.sh /path/to/project` copies the
   skill into that project's `.claude/skills/odd/` and registers the Stop hook in
   its `.claude/settings.json`.

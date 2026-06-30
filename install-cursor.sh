@@ -7,8 +7,9 @@ TARGET="${1:?usage: ./install-cursor.sh /path/to/project}"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p "$TARGET/.cursor/skills"
-rm -rf "$TARGET/.cursor/skills/odd"
+rm -rf "$TARGET/.cursor/skills/odd" "$TARGET/.cursor/skills/odd-plan"
 cp -r "$SRC/skills/odd" "$TARGET/.cursor/skills/odd"
+cp -r "$SRC/skills/odd-plan" "$TARGET/.cursor/skills/odd-plan"
 chmod +x "$TARGET/.cursor/skills/odd/bin/"* 2>/dev/null || true
 
 HOOKS="$TARGET/.cursor/hooks.json"
@@ -55,6 +56,7 @@ cat <<EOF
 
 ODD installed for Cursor in $TARGET/.cursor/
   - skill:     .cursor/skills/odd/SKILL.md
+  - plan:      .cursor/skills/odd-plan/SKILL.md
   - cli:       .cursor/skills/odd/bin/odd
   - hooks:     .cursor/hooks.json (sessionStart + stop gate)
   - stop gate: .cursor/skills/odd/hooks/outcome_gate.py

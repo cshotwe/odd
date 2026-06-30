@@ -16,6 +16,8 @@ Commands:
   odd done                             summary; exits non-zero if outcome unproven
   odd archive [--slug NAME]            promote the proven contract to outcomes/
   odd ci [SPEC ...] [--junit FILE]     run archived outcome specs (CI regression)
+  odd from-spec SPEC [--dry-run|--apply]  load specs/*.md into .odd/outcome.json
+  odd spec {init|validate|list} ...    scaffold and lint feature specs
   odd reset                            remove .odd state
 
 No dependencies beyond the Python 3.8+ standard library.
@@ -35,7 +37,33 @@ ODD_DIR = ".odd"
 CONTRACT = os.path.join(ODD_DIR, "outcome.json")
 EVIDENCE = os.path.join(ODD_DIR, "evidence.json")
 OUTCOMES_DIR = "outcomes"  # durable, repo-committed specs run by `odd ci`
+SPECS_DIR = "specs"
 MAX_OUTPUT = 4000  # chars of captured output stored per check
+
+SPEC_TEMPLATE = """---
+type: software
+artifact: ./
+slug: {slug}
+---
+
+# {title}
+
+## Problem
+
+## Goal
+{goal}
+
+## Non-goals
+
+## Acceptance criteria
+
+- <observable behavior> | cmd: `<shell command>` | expect: `<substring>` | kind: e2e
+
+## Artifact hints
+
+## Open questions
+
+"""
 
 
 def _root():
@@ -316,6 +344,236 @@ def cmd_reset(_args):
     print("odd state cleared")
 
 
+# ---------------------------------------------------------- spec / from-spec ---
+
+def _parse_frontmatter(text):
+    meta, body = {}, text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            block = text[3:end].strip()
+            body = text[end + 4:].lstrip("\n")
+            for line in block.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    meta[k.strip()] = v.strip().strip('"').strip("'")
+    return meta, body
+
+
+def _parse_sections(body):
+    sections, current, lines = {}, None, []
+    for line in body.splitlines():
+        if line.startswith("## "):
+            if current is not None:
+                sections[current] = "\n".join(lines).strip()
+            current = line[3:].strip().lower()
+            lines = []
+        else:
+            lines.append(line)
+    if current is not None:
+        sections[current] = "\n".join(lines).strip()
+    return sections
+
+
+def _parse_criterion_line(line):
+    line = re.sub(r"^-\s*(\[[ xX]\]\s*)?", "", line.strip())
+    if not line:
+        return None
+    parts = [p.strip() for p in line.split("|")]
+    desc = parts[0]
+    chk = {"desc": desc, "kind": "self"}
+    for part in parts[1:]:
+        if ":" in part:
+            key, val = part.split(":", 1)
+            key = key.strip().lower().replace("-", "_")
+            val = val.strip().strip("`\"")
+            if key == "expect_fail":
+                chk["expect_fail"] = True
+            elif key in ("cmd", "expect", "kind", "source"):
+                chk[key] = val
+        elif part.strip().lower() in ("expect-fail", "expect_fail"):
+            chk["expect_fail"] = True
+    return chk
+
+
+def parse_feature_spec(text):
+    """Parse specs/<slug>.md into outcome + checks."""
+    meta, body = _parse_frontmatter(text)
+    sections = _parse_sections(body)
+    goal = sections.get("goal", "").strip()
+    if not goal:
+        first = re.search(r"^#\s+(.+)$", body, re.M)
+        if first:
+            goal = first.group(1).strip()
+    criteria = sections.get("acceptance criteria", "")
+    checks = []
+    for line in criteria.splitlines():
+        if line.strip().startswith("-"):
+            chk = _parse_criterion_line(line)
+            if chk:
+                checks.append(chk)
+    return {
+        "meta": meta,
+        "goal": goal,
+        "checks": checks,
+        "sections": sections,
+    }
+
+
+def _contract_from_parsed(parsed):
+    contract = {
+        "outcome": parsed["goal"],
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "checks": [],
+    }
+    if parsed["meta"].get("type"):
+        contract["type"] = parsed["meta"]["type"]
+    if parsed["meta"].get("slug"):
+        contract["spec"] = os.path.join(SPECS_DIR, f"{parsed['meta']['slug']}.md")
+    for chk in parsed["checks"]:
+        entry = {
+            "desc": chk["desc"],
+            "cmd": chk.get("cmd", ""),
+            "expect": chk.get("expect", ""),
+            "expect_fail": chk.get("expect_fail", False),
+            "kind": chk.get("kind", "self"),
+        }
+        if chk.get("source"):
+            entry["source"] = chk["source"]
+        contract["checks"].append(entry)
+    return contract
+
+
+def cmd_from_spec(args):
+    path = args.spec
+    if not os.path.isabs(path):
+        path = _path(path)
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        sys.exit(f"cannot read spec: {e}")
+    parsed = parse_feature_spec(text)
+    if not parsed["goal"]:
+        sys.exit("spec has no ## Goal (or # title) — cannot derive outcome")
+    contract = _contract_from_parsed(parsed)
+    tbd = [i for i, c in enumerate(contract["checks"], 1) if not c.get("cmd")]
+    e2e = [c for c in contract["checks"] if c.get("kind") == "e2e" and c.get("cmd")]
+    if not contract["checks"]:
+        sys.exit("spec has no acceptance criteria bullets")
+    print(f"outcome: {contract['outcome']}")
+    print(f"checks: {len(contract['checks'])} ({len(e2e)} e2e with cmd)")
+    for i, chk in enumerate(contract["checks"], 1):
+        note = "TBD" if not chk.get("cmd") else chk.get("kind", "self")
+        print(f"  #{i} [{note}] {chk['desc']}")
+        if chk.get("cmd"):
+            print(f"       $ {chk['cmd']}")
+    if tbd:
+        print(f"\n⚠ {len(tbd)} check(s) missing cmd: — fill in specs before --apply")
+    if not e2e:
+        print("\n⚠ NO e2e check with cmd — odd done will report unverified")
+    print(f'\nodd init "{contract["outcome"]}"')
+    for chk in contract["checks"]:
+        if not chk.get("cmd"):
+            print(f'# TBD: odd check "{chk["desc"]}" --cmd "..." --kind e2e')
+            continue
+        parts = [f'odd check "{chk["desc"]}"', f'--cmd "{chk["cmd"]}"']
+        if chk.get("expect"):
+            parts.append(f'--expect "{chk["expect"]}"')
+        if chk.get("expect_fail"):
+            parts.append("--expect-fail")
+        if chk.get("kind") and chk["kind"] != "self":
+            parts.append(f'--kind {chk["kind"]}')
+        if chk.get("source"):
+            parts.append(f'--source "{chk["source"]}"')
+        print(" ".join(parts))
+    if args.dry_run or not args.apply:
+        if not args.apply:
+            print("\n(dry-run — pass --apply to write .odd/outcome.json)")
+        return
+    if tbd:
+        sys.exit("refusing --apply while checks lack cmd: (fix spec or use manual odd check)")
+    if not e2e:
+        sys.exit("refusing --apply without at least one e2e check with cmd:")
+    # Strip empty optional fields for storage (match cmd_check / archive shape)
+    cleaned = []
+    for chk in contract["checks"]:
+        entry = {
+            "desc": chk["desc"],
+            "cmd": chk["cmd"],
+            "expect": chk.get("expect") or "",
+            "expect_fail": bool(chk.get("expect_fail")),
+            "kind": chk.get("kind", "self"),
+        }
+        if chk.get("source"):
+            entry["source"] = chk["source"]
+        cleaned.append({k: v for k, v in entry.items() if v not in (None, False, "")})
+    contract["checks"] = cleaned
+    _save(CONTRACT, contract)
+    if os.path.exists(_path(EVIDENCE)):
+        os.remove(_path(EVIDENCE))
+    print(f"\ncontract written to {CONTRACT}")
+
+
+_HEDGES = ("should", "may", "might", "could", "try to", "aim to")
+
+
+def cmd_spec(args):
+    if args.spec_cmd == "init":
+        title = args.title
+        slug = args.slug or _slugify(title)
+        goal = args.goal or f"users can {title.lower()}"
+        dest = _path(os.path.join(SPECS_DIR, f"{slug}.md"))
+        if os.path.exists(dest) and not args.force:
+            sys.exit(f"{dest} exists; pass --force to overwrite")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w") as f:
+            f.write(SPEC_TEMPLATE.format(slug=slug, title=title, goal=goal))
+        print(f"spec scaffolded: {dest}")
+        return
+    if args.spec_cmd == "list":
+        import glob as _glob
+        paths = sorted(_glob.glob(_path(os.path.join(SPECS_DIR, "*.md"))))
+        paths = [p for p in paths if not p.endswith("README.md")]
+        if not paths:
+            print(f"no specs in {SPECS_DIR}/")
+            return
+        for p in paths:
+            print(os.path.relpath(p, _root()))
+        return
+    if args.spec_cmd == "validate":
+        path = args.spec
+        if not os.path.isabs(path):
+            path = _path(path)
+        try:
+            with open(path) as f:
+                text = f.read()
+        except OSError as e:
+            sys.exit(f"cannot read spec: {e}")
+        parsed = parse_feature_spec(text)
+        issues = []
+        if not parsed["goal"]:
+            issues.append("missing ## Goal")
+        elif any(h in parsed["goal"].lower() for h in _HEDGES):
+            issues.append("Goal uses hedged language — rephrase as observable fact")
+        if not parsed["checks"]:
+            issues.append("missing ## Acceptance criteria bullets")
+        tbd = [c for c in parsed["checks"] if not c.get("cmd")]
+        if tbd:
+            issues.append(f"{len(tbd)} criterion(s) lack cmd:")
+        e2e = [c for c in parsed["checks"] if c.get("kind") == "e2e" and c.get("cmd")]
+        if parsed["checks"] and not e2e:
+            issues.append("no e2e criterion with cmd: — add at least one")
+        if issues:
+            print("spec issues:")
+            for i in issues:
+                print(f"  - {i}")
+            sys.exit(1)
+        print("✓ spec is ready for odd from-spec --apply")
+        return
+    sys.exit(f"unknown spec subcommand: {args.spec_cmd}")
+
+
 # ------------------------------------------------------------ archive/ci ---
 # An archived outcome spec is the durable form of a proven contract: the
 # outcome sentence + its black-box checks, committed to the repo and re-run by
@@ -540,6 +798,29 @@ def main():
 
     sp = sub.add_parser("reset", help="remove .odd state")
     sp.set_defaults(func=cmd_reset)
+
+    sp = sub.add_parser("from-spec", help="load a specs/*.md feature spec into .odd/outcome.json")
+    sp.add_argument("spec", help="path to spec markdown (e.g. specs/billing-export.md)")
+    sp.add_argument("--dry-run", action="store_true", help="print odd init/check commands only")
+    sp.add_argument("--apply", action="store_true", help="write .odd/outcome.json")
+    sp.set_defaults(func=cmd_from_spec)
+
+    sp = sub.add_parser("spec", help="scaffold and validate feature specs")
+    spec_sub = sp.add_subparsers(dest="spec_cmd", required=True)
+
+    sp_init = spec_sub.add_parser("init", help="scaffold specs/<slug>.md")
+    sp_init.add_argument("title", help="short feature title")
+    sp_init.add_argument("--slug", help="filename slug (default: derived from title)")
+    sp_init.add_argument("--goal", help="override ## Goal text")
+    sp_init.add_argument("--force", action="store_true", help="overwrite existing spec")
+    sp_init.set_defaults(func=cmd_spec)
+
+    sp_val = spec_sub.add_parser("validate", help="lint a feature spec")
+    sp_val.add_argument("spec", help="path to spec markdown")
+    sp_val.set_defaults(func=cmd_spec)
+
+    sp_list = spec_sub.add_parser("list", help="list specs/*.md")
+    sp_list.set_defaults(func=cmd_spec)
 
     args = p.parse_args()
     args.func(args)
